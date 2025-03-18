@@ -110,6 +110,10 @@ def process_image(image, white_threshold=120, color_variance_threshold=15,
     if color_history is None:
         color_history = None
     
+    # Apply Gaussian blur before downsampling
+    sigma = 2.0  # Adjust based on your downsampling factor
+    blurred = cv2.GaussianBlur(image, (0, 0), sigma)
+
     # Downsample the image to 1/16 size for efficiency
     eighth_size = cv2.resize(image, (image.shape[1] // 16, image.shape[0] // 16), 
                           interpolation=cv2.INTER_AREA)
@@ -281,13 +285,8 @@ def process_image(image, white_threshold=120, color_variance_threshold=15,
             keep_weight = 1.0 - combined_confidence  # Higher confidence = lower chance of keeping old color
             keep_weight = np.clip(keep_weight, 0.0, 0.8)  # Cap the maximum stickiness
             
-            # Apply a random factor to break persistent incorrect assignments
-            # This helps prevent colors from getting "stuck" indefinitely
-            random_factor = np.random.random(size=keep_weight.shape) * 0.2
-            effective_weight = keep_weight - random_factor
-            
             # Only keep colors with sufficient weight
-            keep_prev_color = effective_weight > 0.3
+            keep_prev_color = keep_weight > 0.6
         
         # Create stabilized color assignment
         color_assignment = np.copy(new_color_assignment)
