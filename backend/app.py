@@ -42,10 +42,9 @@ def webcam_capture_and_process():
                 white_threshold=120,
                 color_variance_threshold=15,
                 history_frames=history_frames,
-                history_size=5,
+                history_size=10,
                 stabilization_weight=0.7,
-                color_history=color_history,
-                color_stabilization_weight=0.9
+                color_history=color_history
             )
             # processed_frame, history_frames = process_image2(
             #     frame,
@@ -82,31 +81,27 @@ def webcam_capture_and_process():
         cv2.destroyAllWindows()
 
 def process_image(image, white_threshold=120, color_variance_threshold=15, 
-                  history_frames=None, history_size=5, stabilization_weight=0.7,
-                  color_history=None, color_stabilization_weight=0.9):
+                  history_frames=None, history_size=10, stabilization_weight=0.7,
+                  color_history=None):
     """
     Process an image to create a masked version with improved stabilization
-    and assign remaining non-masked pixels to red, blue, or green categories.
+    and assign remaining non-masked pixels to red, blue, or green categories
+    with temporal stability in color assignments.
     
     Args:
         image: Input image (BGR format)
         white_threshold: Brightness threshold for white detection
         color_variance_threshold: Maximum allowed variance between RGB channels
         history_frames: Previous mask history for temporal stabilization
-        history_size: Number of frames to keep in history
+        history_size: Number of frames to keep in history (default 10)
         stabilization_weight: Weight given to historical data (higher = more stable)
         color_history: Previous color assignments for temporal stabilization
-        color_stabilization_weight: Weight for color assignment stability
         
     Returns:
         processed: Processed image with mask and color assignments applied
         history_frames: Updated mask history
-        color_history: Updated color assignments history
-    """
-    # Using pre-imported cv2 and numpy
-    import numpy as np
-    import cv2
-    
+        color_history: Updated color assignment history
+    """    
     # Initialize history if None
     if history_frames is None:
         history_frames = []
@@ -152,28 +147,37 @@ def process_image(image, white_threshold=120, color_variance_threshold=15,
     # Create a soft color balance mask
     color_balance_soft = np.clip(1 - (max_diff - color_variance_threshold + 5) / 10, 0, 1)
     
-    # Combined soft mask: must be bright AND have balanced RGB values
-    current_mask_soft = brightness_mask_soft * color_balance_soft
+    # Also consider low saturation for whites
+    # Convert to HSV to check saturation
+    hsv_for_mask = cv2.cvtColor(normalized_img, cv2.COLOR_BGR2HSV)
+    s_for_mask = hsv_for_mask[:,:,1]
+    
+    # Low saturation contributes to the white mask
+    # Lower saturation = more likely to be considered white
+    low_saturation_soft = np.clip(1.0 - (s_for_mask.astype(float) / 40.0), 0.0, 1.0)
+    
+    # Combined soft mask: must be bright AND (have balanced RGB values OR low saturation)
+    current_mask_soft = brightness_mask_soft * np.maximum(color_balance_soft, low_saturation_soft * 0.8)
     
     # Apply spatial filtering to reduce noise using OpenCV
     current_mask_filtered = cv2.GaussianBlur(current_mask_soft.astype(np.float32), (5, 5), 1.0)
     
     # Apply temporal stabilization using the history of masks
     if len(history_frames) > 0:
-        # Calculate weighted average of historical masks with exponential decay
-        # More recent frames have higher weight
-        weights = np.array([np.exp(-i/2) for i in range(len(history_frames)-1, -1, -1)])
+        # Calculate weighted average of historical masks with a slower exponential decay
+        # More recent frames have higher weight, but with a slower falloff for better stability
+        weights = np.array([np.exp(-i/3.5) for i in range(len(history_frames)-1, -1, -1)])
         weights = weights / np.sum(weights)
         
         history_mask = np.zeros_like(current_mask_filtered)
         for i, (mask, _) in enumerate(history_frames):
             history_mask += weights[i] * mask
         
-        # Apply hysteresis to stabilize transitions
+        # Apply hysteresis to stabilize transitions with bias toward masking
         # If a pixel was previously masked, it needs more evidence to become unmasked
-        # If a pixel was previously not masked, it needs more evidence to become masked
-        hysteresis_high = 0.55  # Threshold to transition from unmasked to masked
-        hysteresis_low = 0.45   # Threshold to transition from masked to unmasked
+        # If a pixel was previously not masked, it needs less evidence to become masked
+        hysteresis_high = 0.40  # Threshold to transition from unmasked to masked
+        hysteresis_low = 0.30   # Threshold to transition from masked to unmasked
         
         # Get previous frame's final binary mask
         _, prev_binary = history_frames[-1]
@@ -221,98 +225,105 @@ def process_image(image, white_threshold=120, color_variance_threshold=15,
     # Apply the mask (make masked areas black)
     processed[final_mask] = [0, 0, 0]
     
-    # Now assign colors to non-masked areas
+    # Now assign colors to non-masked areas with temporal stability
     # -------------------------------------------------
     # Get non-masked pixels
     non_masked = ~final_mask
     
-    # Create a color assignment map based on pixel characteristics
-    # We'll use HSV color space for more stable clustering
+    # Create color assignments based on HSV values
     hsv_img = cv2.cvtColor(normalized_img, cv2.COLOR_BGR2HSV)
     h_channel = hsv_img[:,:,0]  # Hue
     s_channel = hsv_img[:,:,1]  # Saturation
     
-    # Create initial color assignments based on hue and saturation
-    # This will assign pixels to one of three categories (0, 1, 2)
-    # corresponding to red, green, blue
+    # Create current frame's color assignment
+    new_color_assignment = np.zeros(non_masked.shape, dtype=np.uint8)
     
-    # For consistent clustering, we'll use pixel position (x, y) and color features
-    height, width = non_masked.shape
-    y_coords, x_coords = np.mgrid[0:height, 0:width]
+    # Identify low saturation areas (near white/gray/black) and exclude them from color assignment
+    # These areas get noisy hue values and shouldn't be strongly assigned to a color
+    low_saturation_mask = s_channel < 40  # Low saturation threshold
     
-    # Normalize spatial coordinates to give them appropriate weight
-    x_norm = x_coords / width * 30  # Scale factor can be adjusted
-    y_norm = y_coords / height * 30
+    # Simple hue-based assignment for higher saturation pixels
+    # Red: hue 0-30 or 150-180
+    # Green: hue 30-90
+    # Blue: hue 90-150
+    new_color_assignment[(h_channel < 30) | (h_channel >= 150)] = 0  # Red
+    new_color_assignment[(h_channel >= 30) & (h_channel < 90)] = 1   # Green
+    new_color_assignment[(h_channel >= 90) & (h_channel < 150)] = 2  # Blue
     
-    # Create feature vectors for each pixel
-    # Features: x, y, hue, saturation
-    # We'll use only these features for non-masked pixels
-    features = np.stack([x_norm, y_norm, h_channel.astype(float), s_channel.astype(float)], axis=-1)
-    
-    # Create initial color assignments using thresholds
-    color_assignment = np.zeros(non_masked.shape, dtype=np.uint8)
-    
-    # If we have a previous color assignment, use it for stability
+    # Apply color hysteresis for stability if we have color history
     if color_history is not None:
-        # Apply stabilization by blending previous assignments with new ones
-        # First, generate new assignments based on features
-        feature_assignment = np.zeros_like(color_assignment)
+        # Define confidence based on saturation and hue difference
+        # Higher saturation = more confident in the color assignment
+        # Very low saturation = very low confidence (these are near white/gray areas)
+        s_confidence = np.clip(s_channel.astype(float) / 255.0, 0.2, 1.0)
         
-        # Simple feature-based assignment using hue ranges
-        # Red: hue 0-30 or 150-180
-        # Green: hue 30-90
-        # Blue: hue 90-150
-        hue_ranges = [
-            ((h_channel < 30) | (h_channel >= 150)),  # Red
-            ((h_channel >= 30) & (h_channel < 90)),   # Green
-            ((h_channel >= 90) & (h_channel < 150))   # Blue
-        ]
+        # Low saturation pixels get very low confidence in their hue-based assignment
+        s_confidence[low_saturation_mask] *= 0.3  # Reduce confidence in low saturation areas
         
-        feature_assignment[hue_ranges[0]] = 0  # Red
-        feature_assignment[hue_ranges[1]] = 1  # Green
-        feature_assignment[hue_ranges[2]] = 2  # Blue
+        # Calculate hue difference between current and previous frame
+        # This helps detect actual color changes even when saturation is low
+        hue_diff = np.zeros_like(s_confidence)
         
-        # For stability, we'll blend previous assignment with new one
-        # Masked areas should be ignored in this step
-        non_masked_indices = np.where(non_masked)
+        if isinstance(color_history, tuple) and len(color_history) == 2:
+            prev_non_masked, prev_colors = color_history
+            
+            # Calculate color assignment difference - different assignment = 1, same = 0
+            color_diff = (new_color_assignment != prev_colors).astype(float)
+            
+            # Combine saturation confidence with color difference
+            # If color assignment changed significantly, increase confidence in the new value
+            # This makes the system more responsive to real color changes
+            combined_confidence = s_confidence + (color_diff * 0.3)  # Boost confidence when color changes
+            
+            # Calculate the probability of keeping the previous assignment
+            # Use a weighted confidence approach rather than a hard threshold
+            # This creates a smoother transition when colors are changing
+            keep_weight = 1.0 - combined_confidence  # Higher confidence = lower chance of keeping old color
+            keep_weight = np.clip(keep_weight, 0.0, 0.8)  # Cap the maximum stickiness
+            
+            # Apply a random factor to break persistent incorrect assignments
+            # This helps prevent colors from getting "stuck" indefinitely
+            random_factor = np.random.random(size=keep_weight.shape) * 0.2
+            effective_weight = keep_weight - random_factor
+            
+            # Only keep colors with sufficient weight
+            keep_prev_color = effective_weight > 0.3
         
-        # Create a confidence map - how confident we are in the new assignment
-        # Higher saturation = more confident
-        confidence = np.clip(s_channel / 255.0, 0.1, 0.5)
+        # Create stabilized color assignment
+        color_assignment = np.copy(new_color_assignment)
         
-        # Blend previous and new assignments with weighted average
-        temp_assignment = np.copy(color_history)
+        # Only keep previous colors where confidence is low and pixel was not masked
+        # in both current and previous frame
+        valid_history = non_masked & np.ones_like(non_masked)  # All non-masked pixels
+        if isinstance(color_history, tuple) and len(color_history) == 2:
+            prev_non_masked, _ = color_history
+            valid_history = non_masked & prev_non_masked  # Pixels that were non-masked in both frames
         
-        # Only update non-masked areas
-        # Extract confidence values for non-masked pixels
-        confidence_non_masked = confidence[non_masked_indices]
-        
-        # Calculate adaptive weight for each non-masked pixel
-        adaptive_weight = color_stabilization_weight * (1 - confidence_non_masked)
-        
-        # Calculate the probability of keeping the previous assignment
-        keep_prev_mask = np.random.random(len(non_masked_indices[0])) < adaptive_weight
-        change_indices = np.where(~keep_prev_mask)[0]
-        
-        # Update only pixels that should change
-        if len(change_indices) > 0:
-            update_y = non_masked_indices[0][change_indices]
-            update_x = non_masked_indices[1][change_indices]
-            temp_assignment[update_y, update_x] = feature_assignment[update_y, update_x]
-        
-        color_assignment = temp_assignment
+        # Initialize prev_colors to ensure it exists
+        prev_colors = np.zeros_like(color_assignment)
+        if isinstance(color_history, tuple) and len(color_history) == 2:
+            _, prev_colors = color_history
+            
+        # Apply hysteresis to color assignments
+        # For each color channel, apply special handling
+        for color_idx in range(3):
+            # Pixels that were previously this color need stronger evidence to change
+            prev_is_this_color = valid_history & (prev_colors == color_idx)
+            curr_is_diff_color = new_color_assignment != color_idx
+            
+            # Where prev was this color, but current is different with LOW confidence,
+            # keep as previous color
+            should_keep_as_prev = prev_is_this_color & curr_is_diff_color & keep_prev_color
+            color_assignment[should_keep_as_prev] = color_idx
         
     else:
-        # For first frame, create assignment from scratch
-        # Simple clustering using hue thresholds
-        color_assignment[non_masked & (h_channel < 30)] = 0  # Red
-        color_assignment[non_masked & (h_channel >= 30) & (h_channel < 90)] = 1  # Green
-        color_assignment[non_masked & (h_channel >= 90)] = 2  # Blue
+        # For first frame, just use the new assignment
+        color_assignment = new_color_assignment
     
-    # Store color assignment for next frame
-    color_history = color_assignment.copy()
+    # Store color history for next frame (both non-masked region and color assignments)
+    color_history = (non_masked, color_assignment)
     
-    # Apply color mapping to the processed image
+    # Apply color mapping to the processed image - but only for non-masked areas
     # Red pixels
     processed[non_masked & (color_assignment == 0)] = [0, 0, 255]  # BGR for Red
     # Green pixels
