@@ -37,7 +37,7 @@ def webcam_capture_and_process():
                 break
                 
             # Process the image using our stabilized function
-            processed_frame, history_frames, color_history = process_image(
+            processed_frame, history_frames, color_history, color_matrix = process_image(
                 frame,
                 white_threshold=120,
                 color_variance_threshold=15,
@@ -55,7 +55,7 @@ def webcam_capture_and_process():
             # )
             
             # Update the global array
-            global_image_array = processed_frame
+            global_image_array = color_matrix
             processed_image_available = True
             
             # Get the original dimensions for display purposes
@@ -101,6 +101,7 @@ def process_image(image, white_threshold=120, color_variance_threshold=15,
         processed: Processed image with mask and color assignments applied
         history_frames: Updated mask history
         color_history: Updated color assignment history
+        color_matrix: Matrix with pixel values (0=Black, 1=Red, 2=Green, 3=Blue)
     """    
     # Initialize history if None
     if history_frames is None:
@@ -330,7 +331,23 @@ def process_image(image, white_threshold=120, color_variance_threshold=15,
     # Blue pixels
     processed[non_masked & (color_assignment == 2)] = [255, 0, 0]  # BGR for Blue
     
-    return processed, history_frames, color_history
+    # Create color matrix with values (0=Black, 1=Red, 2=Green, 3=Blue)
+    color_matrix = np.zeros(non_masked.shape, dtype=np.uint8)
+    
+    # Set values based on masks:
+    # 0 = Black (masked areas)
+    # 1 = Red (color_assignment == 0)
+    # 2 = Green (color_assignment == 1)
+    # 3 = Blue (color_assignment == 2)
+    
+    # By default, the matrix is initialized with zeros (Black)
+    # Set the non-masked areas to their respective color codes
+    color_matrix[non_masked & (color_assignment == 0)] = 1  # Red
+    color_matrix[non_masked & (color_assignment == 1)] = 2  # Green
+    color_matrix[non_masked & (color_assignment == 2)] = 3  # Blue
+    
+    return processed, history_frames, color_history, color_matrix
+
 
 # Route to serve the numpy array as JSON
 @app.route('/api/image-data', methods=['GET'])
