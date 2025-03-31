@@ -215,13 +215,9 @@ function App() {
       setIsPlaying(false);
       clearTimeout(animationRef.current);
       
-      Object.keys(activeNotes.current).forEach(key => {
-        const [colorCode] = key.split('-');
-        const instrument = colorToInstrument[colorCode];
-        if (synths.current[instrument]) {
-          synths.current[instrument].releaseAll();
-        }
-      });
+        Object.keys(synths.current).forEach(instrument => {
+      synths.current[instrument].releaseAll();
+    });
       
       activeNotes.current = {};
       previousColumnRef.current = null;
