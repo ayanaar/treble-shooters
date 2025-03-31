@@ -179,7 +179,7 @@ function App() {
         const prevColor = row[previousColumnRef.current];
         const currColor = row[columnIndex];
         
-        if (prevColor > 0 && currColor === 0) { 
+        if (prevColor > 0 && currColor !== prevColor) { 
           const noteKey = `${rowIndex}-${prevColor}`;
           if (activeNotes.current[noteKey]) {
             synths.current[colorToInstrument[prevColor]]
