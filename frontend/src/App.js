@@ -77,34 +77,42 @@ function App() {
 
     synths.current = {
       violin: new Tone.PolySynth(Tone.Synth, {
+        oscillator: {
+          type: "sawtooth"  
+        },
         envelope: {
-          attack: 0.1,
+          attack: 0.2,   
           decay: 0.1,
-          sustain: 0.3,
-          release: 0.5
+          sustain: 0.7,  
+          release: 1.0  
         },
         volume: -8
       }).connect(volumeNode.current),
       
-      piano: new Tone.PolySynth(Tone.Synth, {
-        envelope: {
-          attack: 0.01,
-          decay: 0.1,
-          sustain: 0.3,
-          release: 0.4
+      piano : new Tone.PolySynth(Tone.Synth, {
+        oscillator: {
+          type: "triangle" 
         },
-        volume: -10
+        envelope: {
+          attack: 0.005,   
+          decay: 0.2,      
+          sustain: 0.1,    
+          release: 0.3    
+        },
+        volume: -5
       }).connect(volumeNode.current),
       
-      flute: new Tone.PolySynth(Tone.FMSynth, {
-        envelope: {
-          attack: 0.1,
-          decay: 0.1,
-          sustain: 0.4,
-          release: 0.5
+      flute : new Tone.PolySynth(Tone.Synth, {
+        oscillator: {
+          type: "sine"  
         },
-        modulationIndex: 5,
-        volume: -9
+        envelope: {
+          attack: 0.05,  
+          decay: 0.1,   
+          sustain: 0.8,  
+          release: 0.6  
+        },
+        volume: -5
       }).connect(volumeNode.current)
     };
 
@@ -124,10 +132,7 @@ function App() {
   //         method: 'HEAD',
   //         mode: 'cors'
   //       });
-        
-  //       if (!ping.ok) throw new Error("Backend not responding");
-  
-  //       // Fetch the matrix data from backend
+          
   //       const response = await fetch('http://localhost:5000/api/matrix', {
   //         headers: {
   //           'Accept': 'application/json',
