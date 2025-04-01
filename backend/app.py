@@ -81,8 +81,7 @@ def webcam_capture_and_process():
             side_by_side = np.zeros((height, width * 2, 3), dtype=np.uint8)
             
             # Place the original frame on the left side
-            blurred = cv2.GaussianBlur(frame, (0, 0), 2.0)
-            side_by_side[:, :width] = blurred
+            side_by_side[:, :width] = frame
             
             # Place the processed frame on the right side
             side_by_side[:, width:] = enlarged_processed
@@ -148,7 +147,7 @@ def process_image_simplified(image, white_threshold=120, color_variance_threshol
     # Ensure the image is uint8
     eighth_size_uint8 = np.uint8(eighth_size)
     
-    # Simple normalization instead of complex CLAHE
+    # Simple normalization 
     normalized_img = cv2.normalize(eighth_size_uint8, None, 0, 255, cv2.NORM_MINMAX)
     
     # Extract channels
@@ -168,7 +167,7 @@ def process_image_simplified(image, white_threshold=120, color_variance_threshol
     max_diff = np.maximum(np.maximum(rg_diff, rb_diff), gb_diff)
     color_balance_mask = max_diff < color_variance_threshold
     
-    # Simplified combined mask
+    # Combined mask
     # Convert to HSV to check saturation
     hsv_for_mask = cv2.cvtColor(normalized_img, cv2.COLOR_BGR2HSV)
     s_for_mask = hsv_for_mask[:,:,1]
@@ -313,13 +312,12 @@ def process_image(image, white_threshold=120, color_variance_threshold=15,
     eighth_size_uint8 = np.uint8(eighth_size)
     
     # Normalize the image using histogram equalization to reduce exposure changes
-    # hsv = cv2.cvtColor(eighth_size_uint8, cv2.COLOR_BGR2HSV)
-    # h, s, v = cv2.split(hsv)
-    # clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    # v_eq = clahe.apply(v)
-    # hsv_eq = cv2.merge([h, s, v_eq])
-    # normalized_img = cv2.cvtColor(hsv_eq, cv2.COLOR_HSV2BGR)
-    normalized_img = cv2.normalize(eighth_size_uint8, None, 0, 255, cv2.NORM_MINMAX)
+    hsv = cv2.cvtColor(eighth_size_uint8, cv2.COLOR_BGR2HSV)
+    h, s, v = cv2.split(hsv)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    v_eq = clahe.apply(v)
+    hsv_eq = cv2.merge([h, s, v_eq])
+    normalized_img = cv2.cvtColor(hsv_eq, cv2.COLOR_HSV2BGR)
     
     # Create a mask that checks if all RGB channels are above threshold
     r, g, b = normalized_img[:,:,0], normalized_img[:,:,1], normalized_img[:,:,2]
