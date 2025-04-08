@@ -6,28 +6,9 @@ import './App.css';
 const rowToNote = ["A5", "G5", "E5", "D5", "C5", "A4", "G4", "E4", "D4", "C4", "A3", "G3", "E3", "D3", "C3"];
 const colorToInstrument = { 1: "violin", 2: "piano", 3: "flute" };
 
-const testMatrix = [
-  [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-  [0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-  [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-  [0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-  [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-  [3, 3, 3, 3, 3, 1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3],
-  [0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-  [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-  [0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-  [0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-  [0, 2, 0, 2, 0, 2, 0, 2, 0, 2, 1, 2, 0, 2, 0, 2, 0, 2, 0, 2],
-  [2, 0, 2, 0, 2, 0, 2, 0, 2, 0, 2, 1, 2, 0, 2, 0, 2, 0, 2, 0],
-  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
-  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0],
-  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0],
-];
-
-
 //Scale matrix to be 15 by 20 to allow for 3 octaves and 5 bars for 4/4
 function scaleMatrix(originalMatrix, targetRows, targetCols) {
-  if (!originalMatrix.length) return [];
+  if (!originalMatrix || !originalMatrix.length) return Array(targetRows).fill().map(() => Array(targetCols).fill(0));
   
   const originalRows = originalMatrix.length;
   const originalCols = originalMatrix[0].length;
@@ -53,12 +34,14 @@ function scaleMatrix(originalMatrix, targetRows, targetCols) {
 
 
 function App() {
-  const [matrix, setMatrix] = useState(scaleMatrix(testMatrix, 15, 20));
+  const [matrix, setMatrix] = useState(Array(15).fill().map(() => Array(20).fill(0)));
   const [currentColumn, setCurrentColumn] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [volume, setVolume] = useState(0.5);
   const [tempo, setTempo] = useState(110);
   const [isAudioReady, setIsAudioReady] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
  
   const canvasRef = useRef(null);
   const animationRef = useRef(null);
@@ -67,10 +50,9 @@ function App() {
   const synths = useRef({});
   const volumeNode = useRef(null);
   const lastStartTime = useRef(0);
-  // const matrixRef = useRef([]);
+  const matrixRef = useRef([]);
 
   // Initialize Tone.js instruments 
-  // Uses polySynth right now but can change to use samplers later for more realistic sound
   useEffect(() => {
     volumeNode.current = new Tone.Volume().toDestination();
     volumeNode.current.volume.value = Tone.gainToDb(volume);
@@ -125,57 +107,68 @@ function App() {
   }, []);
 
   // Fetch matrix from backend
-  // useEffect(() => {
-  //   const fetchMatrix = async () => {
-  //     try {
-  //       const ping = await fetch('http://localhost:5000', { 
-  //         method: 'HEAD',
-  //         mode: 'cors'
-  //       });
-          
-  //       const response = await fetch('http://localhost:5000/api/matrix', {
-  //         headers: {
-  //           'Accept': 'application/json',
-  //         },
-  //       });
+  useEffect(() => {
+    const fetchMatrix = async () => {
+      try {
+        const response = await fetch('http://localhost:5000/api/image-data');
   
-  //       if (!response.ok) {
-  //         throw new Error(`HTTP ${response.status} - ${await response.text()}`);
-  //       }
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status} - ${await response.text()}`);
+        }
   
-  //       const data = await response.json();
+        const data = await response.json();
+        console.log("Data received:", data);
         
-  //       if (!data?.matrix) {
-  //         throw new Error("Invalid matrix data format");
-  //       }
+        if (!data?.image) {
+          throw new Error("Invalid image data format");
+        }
   
-  //       const scaledMatrix = scaleMatrix(data.matrix, 15, 20);
-  //       setMatrix(scaledMatrix);
-  //       matrixRef.current = scaledMatrix;
-  //       setError(null);
-  //     } catch (err) {
-  //       setError(`Connection failed: ${err.message}`);
-  //       fetchMatrix();
-  //     } finally {
-  //       setIsLoading(false);
-  //     }
-  //   };
+        const scaledMatrix = scaleMatrix(data.image, 15, 20);
+        setMatrix(scaledMatrix);
+        matrixRef.current = scaledMatrix; // Update the ref with the latest matrix
+        setError(null);
+      } catch (err) {
+        console.error(`Connection failed: ${err.message}`);
+        setError(`Connection failed: ${err.message}`);
+      } finally {
+        setIsLoading(false);
+      }
+    };
   
-  //   fetchMatrix();
-  //   const intervalId = setInterval(fetchMatrix, 100);
-  //   return () => clearInterval(intervalId);
-  // }, []);
+    fetchMatrix(); // Initial fetch
+    
+    // Set up polling every 100ms
+    const intervalId = setInterval(fetchMatrix, 50);
+    
+    // Clean up the interval when component unmounts
+    return () => clearInterval(intervalId);
+  }, []);
   
   // Play notes in the current column given an index
+  // Modified to use matrixRef.current for the latest data
   const playColumn = (columnIndex) => {
     const now = Tone.now();
+    const currentMatrix = matrixRef.current; // Use the ref instead of state for latest data
     
     const startTime = Math.max(now, lastStartTime.current + 0.01);
     lastStartTime.current = startTime;
 
-    //Check if notes are sustained (i.e. were played in previous row) and release if not continuing
+    // First, release all active notes that are no longer in the current column
+    // This ensures notes stop playing when they're removed from the matrix
+    Object.keys(activeNotes.current).forEach(noteKey => {
+      const [rowIndex, colorCode] = noteKey.split('-').map(Number);
+      const currColor = currentMatrix[rowIndex][columnIndex];
+      
+      if (currColor !== colorCode) {
+        synths.current[colorToInstrument[colorCode]]
+          .triggerRelease(rowToNote[rowIndex], startTime);
+        delete activeNotes.current[noteKey];
+      }
+    });
+
+    // Check if notes are sustained from previous column and release if not continuing
     if (previousColumnRef.current !== null) {
-      matrix.forEach((row, rowIndex) => {
+      currentMatrix.forEach((row, rowIndex) => {
         const prevColor = row[previousColumnRef.current];
         const currColor = row[columnIndex];
         
@@ -190,8 +183,8 @@ function App() {
       });
     }
   
-    //Play new notes for this column
-    matrix.forEach((row, rowIndex) => {
+    // Play new notes for this column
+    currentMatrix.forEach((row, rowIndex) => {
       const colorCode = row[columnIndex];
       if (colorCode > 0) {
         const noteKey = `${rowIndex}-${colorCode}`;
@@ -220,9 +213,9 @@ function App() {
       setIsPlaying(false);
       clearTimeout(animationRef.current);
       
-        Object.keys(synths.current).forEach(instrument => {
-      synths.current[instrument].releaseAll();
-    });
+      Object.keys(synths.current).forEach(instrument => {
+        synths.current[instrument].releaseAll();
+      });
       
       activeNotes.current = {};
       previousColumnRef.current = null;
@@ -244,7 +237,7 @@ function App() {
   
     animationRef.current = setTimeout(() => {
       setCurrentColumn(prevCol => {
-        const nextColumn = (prevCol + 1) % matrix[0].length;
+        const nextColumn = (prevCol + 1) % matrixRef.current[0].length;
         playColumn(nextColumn);
         return nextColumn;
       });
@@ -284,7 +277,7 @@ function App() {
       }
     }
 
-    // Have a white line/block to highlight current column to show that it is the one currently being playeds
+    // Have a white line/block to highlight current column to show that it is the one currently being played
     if (currentColumn !== null) {
       ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
       ctx.fillRect(
@@ -301,43 +294,54 @@ function App() {
     <div className="App">
       <h1>Melody Wall</h1>
       
-      <div className="controls">
-        <button onClick={togglePlayback} disabled={!isAudioReady}>
-          {isPlaying ? 'Stop' : 'Play'}
-        </button>
-        
-        <div className="slider-control">
-          <label>Volume:</label>
-          <input 
-            type="range" 
-            min="0" 
-            max="1" 
-            step="0.01" 
-            value={volume} 
-            onChange={(e) => setVolume(parseFloat(e.target.value))} 
-          />
+      {isLoading ? (
+        <p>Loading music data...</p>
+      ) : error ? (
+        <div className="error-message">
+          <p>{error}</p>
+          <p>Trying to reconnect...</p>
         </div>
-        
-        <div className="slider-control">
-          <label>Tempo (BPM):</label>
-          <input 
-            type="range" 
-            min="40" 
-            max="200" 
-            step="1" 
-            value={tempo} 
-            onChange={(e) => setTempo(parseInt(e.target.value))} 
-          />
-          <span>{tempo}</span>
-        </div>
-      </div>
-      
-      <div className="visualization">
-        <canvas ref={canvasRef}></canvas>
-      </div>
+      ) : (
+        <>
+          <div className="controls">
+            <button onClick={togglePlayback} disabled={!isAudioReady}>
+              {isPlaying ? 'Stop' : 'Play'}
+            </button>
+            
+            <div className="slider-control">
+              <label>Volume:</label>
+              <input 
+                type="range" 
+                min="0" 
+                max="1" 
+                step="0.01" 
+                value={volume} 
+                onChange={(e) => setVolume(parseFloat(e.target.value))} 
+              />
+            </div>
+            
+            <div className="slider-control">
+              <label>Tempo (BPM):</label>
+              <input 
+                type="range" 
+                min="40" 
+                max="200" 
+                step="1" 
+                value={tempo} 
+                onChange={(e) => setTempo(parseInt(e.target.value))} 
+              />
+              <span>{tempo}</span>
+            </div>
+          </div>
+          
+          <div className="visualization">
+            <canvas ref={canvasRef}></canvas>
+          </div>
+        </>
+      )}
       
       <div className="legend">
-        <h3>Legend!!!</h3>
+        <h3>Legend</h3>
         <p><span className="color-box red"></span> Red = Violin</p>
         <p><span className="color-box green"></span> Green = Piano</p>
         <p><span className="color-box blue"></span> Blue = Flute</p>
