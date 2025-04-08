@@ -1,24 +1,60 @@
 import cv2
 import numpy as np
 from flask import Flask, Response, jsonify, send_from_directory
+from flask_cors import CORS
 import json
 import threading
 import time
 import os
+import multiprocessing as mp
+from multiprocessing import shared_memory
 
-from process_image import process_image_simplified, process_image
+# Use multiprocessing's shared memory for cross-process communication
+# Default dimensions - update as needed
+IMAGE_HEIGHT = 15
+IMAGE_WIDTH = 20
 
-# Global variable to store the numpy array
-global_image_array = np.zeros((480, 640, 3), dtype=np.uint8)
-processed_image_available = False
+def create_shared_memory():
+    """Create shared memory for the image array"""
+    # Create a shared memory segment for the image
+    array_size = IMAGE_HEIGHT * IMAGE_WIDTH
+    try:
+        # First try to access existing shared memory
+        shm = shared_memory.SharedMemory(name="webcam_image")
+    except:
+        # If it doesn't exist, create it
+        shm = shared_memory.SharedMemory(
+            name="webcam_image", 
+            create=True, 
+            size=array_size
+        )
+        print("Created new shared memory")
+    
+    # Also create a small shared memory segment to indicate availability
+    try:
+        flag_shm = shared_memory.SharedMemory(name="image_available")
+    except:
+        flag_shm = shared_memory.SharedMemory(
+            name="image_available", 
+            create=True, 
+            size=1
+        )
+        # Initialize flag to 0 (not available)
+        flag_shm.buf[0] = 0
+    
+    return shm, flag_shm
+
+# Create shared memory at module load time
+shared_mem, flag_mem = create_shared_memory()
 
 # Initialize Flask app
 app = Flask(__name__, static_folder='../frontend/build')
+CORS(app)
+
+from process_image import process_image_simplified, process_image
 
 # Function to capture from webcam and process images
 def webcam_capture_and_process():
-    global global_image_array, processed_image_available
-    
     # Initialize webcam
     cap = cv2.VideoCapture(0)
     
@@ -29,6 +65,13 @@ def webcam_capture_and_process():
     history_frames = None
     color_history = None
 
+    # Create NumPy array from the shared memory
+    img_array = np.ndarray(
+        (IMAGE_HEIGHT, IMAGE_WIDTH),
+        dtype=np.uint8,
+        buffer=shared_mem.buf
+    )
+
     try:
         while True:
             # Read frame from webcam
@@ -38,7 +81,7 @@ def webcam_capture_and_process():
                 print("Failed to get frame from webcam")
                 break
                 
-            # Process the image using our stabilized function
+            # Process the image 
             processed_frame, history_frames, color_history, color_matrix = process_image_simplified(
                 frame,
                 white_threshold=120,
@@ -48,50 +91,32 @@ def webcam_capture_and_process():
                 stabilization_weight=0.7,
                 color_history=color_history
             )
-            # processed_frame, history_frames = process_image2(
-            #     frame,
-            #     white_threshold=11,
-            #     history_frames=history_frames,
-            #     history_size=5,
-            #     stabilization_weight=0.1
-            # )
             
-            # Update the global array
-            global_image_array = color_matrix
-            processed_image_available = True
+            # Copy the data to shared memory
+            # First make sure dimensions match
+            if color_matrix.shape == (IMAGE_HEIGHT, IMAGE_WIDTH):
+                # Make data available to other processes
+                np.copyto(img_array, color_matrix)
+                # Set the flag to indicate data is available
+                flag_mem.buf[0] = 1
+                # print(f"Updated shared memory: shape={color_matrix.shape}, values={np.unique(color_matrix, return_counts=True)}")
+            else:
+                print(f"Warning: Matrix shape mismatch. Expected {(IMAGE_HEIGHT, IMAGE_WIDTH)}, got {color_matrix.shape}")
             
-            # Get the original dimensions for display purposes
-            display_width = frame.shape[1]  # Original width
-            display_height = frame.shape[0]  # Original height
-
             # Get the original dimensions
             height, width = frame.shape[:2]
-
-            # # Resize the processed image to original dimensions for display
-            # display_frame = cv2.resize(processed_frame, (2*display_width, 2*display_height), 
-            #               interpolation=cv2.INTER_NEAREST)  # Using NEAREST for pixelated effect
-
-            # # Display the resized processed image
-            # cv2.imshow('Processed Webcam Feed', display_frame)
-            # Resize the processed frame to match the original frame's dimensions
-            # The processed frame is 1/16 the size of the original, so we need to scale it up
+            
+            # Resize the processed frame to match the original dimensions
             enlarged_processed = cv2.resize(processed_frame, (width, height), 
-                                           interpolation=cv2.INTER_NEAREST)  # Using NEAREST for pixelated effect
+                                           interpolation=cv2.INTER_NEAREST)
             
             # Create a side-by-side display
-            # Create a blank canvas with twice the width to hold both images
             side_by_side = np.zeros((height, width * 2, 3), dtype=np.uint8)
-            
-            # Place the original frame on the left side
             side_by_side[:, :width] = frame
-            
-            # Place the processed frame on the right side
             side_by_side[:, width:] = enlarged_processed
-            
-            # Add a vertical line between the frames
             side_by_side[:, width-1:width+1] = [255, 255, 255]  # White line
             
-            # Add labels to each frame
+            # Add labels
             font = cv2.FONT_HERSHEY_SIMPLEX
             cv2.putText(side_by_side, 'Original', (10, 30), font, 1, (255, 255, 255), 2)
             cv2.putText(side_by_side, 'Processed', (width + 10, 30), font, 1, (255, 255, 255), 2)
@@ -104,32 +129,38 @@ def webcam_capture_and_process():
                 break
                 
             # Brief pause to reduce CPU usage
-            time.sleep(0.01)
+            time.sleep(0.05)
     finally:
         # Release resources
         cap.release()
         cv2.destroyAllWindows()
 
-
-
-
 # Route to serve the numpy array as JSON
 @app.route('/api/image-data', methods=['GET'])
 def get_image_data():
-    global global_image_array, processed_image_available
+    # Create a NumPy array from the shared memory
+    img_array = np.ndarray(
+        (IMAGE_HEIGHT, IMAGE_WIDTH),
+        dtype=np.uint8,
+        buffer=shared_mem.buf
+    )
     
-    if not processed_image_available:
+    # Check if data is available
+    is_available = flag_mem.buf[0] == 1
+    
+    if not is_available:
         return jsonify({"error": "No processed image available yet"}), 404
     
-    # Convert the numpy array to a format suitable for JSON
-    # We'll convert to a base64 string for efficient transfer
-    import base64
-    _, buffer = cv2.imencode('.jpg', global_image_array)
-    img_str = base64.b64encode(buffer).decode('utf-8')
+    # Make a copy of the array to avoid any potential race conditions
+    current_array = img_array.copy()
     
+    # values, counts = np.unique(current_array, return_counts=True)
+    # print(f"Serving image data: shape={current_array.shape}, values={values}, counts={counts}")
+    matrix_list = current_array.tolist()    
+
     return jsonify({
-        "image": img_str,
-        "shape": global_image_array.shape,
+        "image": matrix_list,
+        "shape": current_array.shape,
         "timestamp": time.time()
     })
 
@@ -142,10 +173,26 @@ def serve(path):
     else:
         return send_from_directory(app.static_folder, 'index.html')
 
+def cleanup_shared_memory():
+    """Clean up shared memory when the program exits"""
+    try:
+        shared_mem.close()
+        shared_mem.unlink()
+        flag_mem.close()
+        flag_mem.unlink()
+        print("Shared memory cleaned up")
+    except Exception as e:
+        print(f"Error cleaning up shared memory: {e}")
+
 if __name__ == '__main__':
+    # Register cleanup function to be called on exit
+    import atexit
+    atexit.register(cleanup_shared_memory)
+    
     # Start webcam capture in a separate thread
     webcam_thread = threading.Thread(target=webcam_capture_and_process, daemon=True)
     webcam_thread.start()
     
     # Start Flask server
+    # Note: When in production, set debug=False
     app.run(debug=True, host='0.0.0.0', port=5000, threaded=True)
