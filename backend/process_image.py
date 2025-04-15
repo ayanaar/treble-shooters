@@ -34,14 +34,14 @@ def process_image_simplified(image, white_threshold=120, color_variance_threshol
 
     # Downsample the image to 1/16 size for efficiency
     # INTER_AREA already applies antialiasing - no need for separate blur
-    eighth_size = cv2.resize(image, (image.shape[1] // 16, image.shape[0] // 16), 
+    downsampled = cv2.resize(image, (image.shape[1] // 32, image.shape[0] // 32), 
                             interpolation=cv2.INTER_AREA)
 
     # Ensure the image is uint8
-    eighth_size_uint8 = np.uint8(eighth_size)
+    downsampled_uint8 = np.uint8(downsampled)
 
     # Simple normalization 
-    normalized_img = cv2.normalize(eighth_size_uint8, None, 0, 255, cv2.NORM_MINMAX)
+    normalized_img = cv2.normalize(downsampled_uint8, None, 0, 255, cv2.NORM_MINMAX)
 
     # Extract channels
     b, g, r = cv2.split(normalized_img)
@@ -98,7 +98,7 @@ def process_image_simplified(image, white_threshold=120, color_variance_threshol
         history_frames.pop(0)
 
     # Create a copy of the image for processing
-    processed = eighth_size_uint8.copy()
+    processed = downsampled_uint8.copy()
 
     # Apply the mask (make masked areas black)
     processed[final_mask] = [0, 0, 0]
@@ -198,14 +198,14 @@ def process_image(image, white_threshold=120, color_variance_threshold=15,
     blurred = cv2.GaussianBlur(image, (0, 0), sigma)
 
     # Downsample the image to 1/16 size for efficiency
-    eighth_size = cv2.resize(image, (image.shape[1] // 16, image.shape[0] // 16), 
+    downsampled = cv2.resize(image, (image.shape[1] // 32, image.shape[0] // 32), 
                             interpolation=cv2.INTER_AREA)
 
     # Ensure the image is uint8
-    eighth_size_uint8 = np.uint8(eighth_size)
+    downsampled_uint8 = np.uint8(downsampled)
 
     # Normalize the image using histogram equalization to reduce exposure changes
-    hsv = cv2.cvtColor(eighth_size_uint8, cv2.COLOR_BGR2HSV)
+    hsv = cv2.cvtColor(downsampled_uint8, cv2.COLOR_BGR2HSV)
     h, s, v = cv2.split(hsv)
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     v_eq = clahe.apply(v)
@@ -307,7 +307,7 @@ def process_image(image, white_threshold=120, color_variance_threshold=15,
         history_frames.pop(0)
 
     # Create a copy of the image for processing
-    processed = eighth_size_uint8.copy()
+    processed = downsampled_uint8.copy()
 
     # Apply the mask (make masked areas black)
     processed[final_mask] = [0, 0, 0]
